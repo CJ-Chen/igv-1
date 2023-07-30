@@ -126,11 +126,12 @@ public class HttpUtils {
 
     /**
      * Explicitly set an oAuth access token for the given host.
+     *
      * @param token oAuth access token
-     * @param host host to apply access token to.  Can contain wildcards (e.g. "*.foo.com")
+     * @param host  host to apply access token to.  Can contain wildcards (e.g. "*.foo.com")
      */
     public void setAccessToken(String token, String host) {
-        if(host == null || host.trim().length() == 0) {
+        if (host == null || host.trim().length() == 0) {
             host = ".*";
         } else {
             host = host.replace("*", ".*");
@@ -141,19 +142,20 @@ public class HttpUtils {
 
     /**
      * Return an access token, if any, from the access token cache.
+     *
      * @param url
      * @return
      */
     String getAccessTokenFor(URL url) {
 
-        for(Map.Entry<Pattern, String> entry : this.accessTokens.entrySet()) {
+        for (Map.Entry<Pattern, String> entry : this.accessTokens.entrySet()) {
             final Pattern pattern = entry.getKey();
             Matcher matcher = pattern.matcher(url.getHost());
-            if(matcher.find()) {
+            if (matcher.find()) {
                 return entry.getValue();
             }
         }
-return null;
+        return null;
 //        if (token == null && oauthProvider != null && oauthProvider.appliesToUrl(url)) {
 //            token = oauthProvider.getAccessToken();
 //        }
@@ -195,13 +197,18 @@ return null;
      */
     public static String mapURL(String urlString) throws MalformedURLException {
 
+        // Check explicit mappings first
+        if (urlMappings.containsKey(urlString)) {
+            return urlMappings.get(urlString);
+        }
+
         if (urlString.startsWith("htsget://")) {
             urlString = urlString.replace("htsget://", "https://");
         } else if (urlString.startsWith("gs://")) {
             urlString = GoogleUtils.translateGoogleCloudURL(urlString);
         }
 
-        if (GoogleUtils.isGoogleCloud(urlString)) {
+        if (GoogleUtils.isGoogleURL(urlString)) {
             if (urlString.indexOf("alt=media") < 0) {
                 urlString = URLUtils.addParameter(urlString, "alt=media");
             }
@@ -219,6 +226,8 @@ return null;
             urlString = urlString.replace("//www.dropbox.com", "//dl.dropboxusercontent.com");
         } else if (host.equals("drive.google.com")) {
             urlString = GoogleUtils.driveDownloadURL(urlString);
+        } else if (host.equals("igv.genepattern.org")) {
+            urlString = urlString.replace("//igv.genepattern.org", "//igv-genepattern-org.s3.amazonaws.com");
         }
 
         // data.broadinstitute.org requires https
@@ -635,6 +644,7 @@ return null;
         return openConnection(url, Collections.<String, String>emptyMap(), "DELETE");
     }
 
+    // Called by IGVSeekableHTTPStream.openInputStreamForRange
     public HttpURLConnection openConnection(URL url, Map<String, String> requestProperties) throws IOException {
         return openConnection(url, requestProperties, "GET");
     }
@@ -669,23 +679,27 @@ return null;
         }
 
 
-        // If we have an explicitly set oauth token for this URL use it.
+        // If we have an explicitly set oauth token for this URL use it.  This is used by port and batch commands
+        // and will ovveride oAuth authentication check
         String token = this.getAccessTokenFor(url);
 
-        // If the URL is protected via an oAuth provider check login, and optionally map url with find/replace string
-        OAuthProvider oauthProvider = OAuthUtils.getInstance().getProviderForURL(url);
-        if (oauthProvider != null) {
+        if (token == null) {
 
-            if(token == null) {
-                oauthProvider.checkLogin();
+            // If the URL is protected via an oAuth provider fetch token, and optionally map url with find/replace string.
+            OAuthProvider oauthProvider = OAuthUtils.getInstance().getProviderForURL(url);
+
+            if (oauthProvider != null) {
+                //Google is skipped here as we don't yet know if the url is protected or not.  Login is invoked after 401 error
+                if (!oauthProvider.isGoogle()) {
+                    oauthProvider.checkLogin();
+                }
                 token = oauthProvider.getAccessToken();
-            }
 
-            if (oauthProvider.findString != null) {
-                // A hack, supported for backward compatibility but not reccomended
-                url = HttpUtils.createURL(url.toExternalForm().replaceFirst(oauthProvider.findString, oauthProvider.replaceString));
+                if (oauthProvider.findString != null) {
+                    // A hack, supported for backward compatibility but not reccomended
+                    url = HttpUtils.createURL(url.toExternalForm().replaceFirst(oauthProvider.findString, oauthProvider.replaceString));
+                }
             }
-
         }
 
         // If a presigned URL, check its validity and update if needed
@@ -716,40 +730,11 @@ return null;
                 GoogleUtils.getProjectID() != null &&
                 GoogleUtils.getProjectID().length() > 0 &&
                 !hasQueryParameter(url, "userProject")) {
+
             url = addQueryParameter(url, "userProject", GoogleUtils.getProjectID());
         }
 
-        HttpURLConnection conn = null;
-        if (proxySettings != null && proxySettings.isProxyDefined()) {
-
-            // NOTE: setting disabledSchemes to "" through System.setProperty does not work !!!
-            System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
-            System.setProperty("jdk.http.auth.proxying.disabledSchemes", "");
-
-//            if (url.getProtocol().equals("https") && proxySettings.isUserPwDefined()) {
-//                conn = new ProxiedHttpsConnection(url, proxySettings.proxyHost, proxySettings.proxyPort,
-//                        proxySettings.user, proxySettings.pw);
-//            } else {
-            Proxy proxy = new Proxy(proxySettings.type, new InetSocketAddress(proxySettings.proxyHost, proxySettings.proxyPort));
-            conn = (HttpURLConnection) url.openConnection(proxy);
-            if (proxySettings.isUserPwDefined()) {
-                byte[] bytes = (proxySettings.user + ":" + proxySettings.pw).getBytes();
-                String encodedUserPwd = String.valueOf(Base64Coder.encode(bytes));
-                conn.setRequestProperty("Proxy-Authorization", "Basic " + encodedUserPwd);
-            }
-//            }
-        }
-        if (conn == null && !PreferencesManager.getPreferences().getAsBoolean("PROXY.DISABLE_CHECK")) {
-            Proxy sysProxy = getSystemProxy(url.toExternalForm());
-            if (sysProxy != null && sysProxy.type() != Proxy.Type.DIRECT) {
-                conn = (HttpURLConnection) url.openConnection(sysProxy);
-            }
-        }
-
-        // If connection is still null no proxy is used
-        if (conn == null) {
-            conn = (HttpURLConnection) url.openConnection();
-        }
+        HttpURLConnection conn = openProxiedConnection(url);
 
         if (!"HEAD".equals(method)) {
             conn.setRequestProperty("Accept", "text/plain");
@@ -886,13 +871,47 @@ return null;
                     message = conn.getResponseMessage();
                     String details = readErrorStream(conn);
 
-                    if (url.getHost().equals("www.googleapis.com") && details.contains("requester pays bucket")) {
+                    if (GoogleUtils.isGoogleURL(url.toExternalForm()) && details.contains("requester pays bucket")) {
                         MessageUtils.showMessage("<html>" + details + "<br>Use Google menu to set project.");
                     }
 
                     throw new HttpResponseException(code, message, details);
                 }
             }
+        }
+        return conn;
+    }
+
+    public HttpURLConnection openProxiedConnection(URL url) throws IOException {
+
+        HttpURLConnection conn = null;
+
+        if (proxySettings != null && proxySettings.isProxyDefined()) {
+
+            // Allow basic auth for proxy authorization
+            System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
+            System.setProperty("jdk.http.auth.proxying.disabledSchemes", "");
+
+            Proxy proxy = new Proxy(proxySettings.type, new InetSocketAddress(proxySettings.proxyHost, proxySettings.proxyPort));
+            conn = (HttpURLConnection) url.openConnection(proxy);
+            if (proxySettings.isUserPwDefined()) {
+                byte[] bytes = (proxySettings.user + ":" + proxySettings.pw).getBytes();
+                String encodedUserPwd = String.valueOf(Base64Coder.encode(bytes));
+                conn.setRequestProperty("Proxy-Authorization", "Basic " + encodedUserPwd);
+            }
+        }
+
+        // Try system property, unless disabled
+        if (conn == null && !PreferencesManager.getPreferences().getAsBoolean("PROXY.DISABLE_CHECK")) {
+            Proxy sysProxy = getSystemProxy(url.toExternalForm());
+            if (sysProxy != null && sysProxy.type() != Proxy.Type.DIRECT) {
+                conn = (HttpURLConnection) url.openConnection(sysProxy);
+            }
+        }
+
+        // If connection is still null no proxy is used
+        if (conn == null) {
+            conn = (HttpURLConnection) url.openConnection();
         }
         return conn;
     }
@@ -1137,6 +1156,19 @@ return null;
         }
     }
 
+    /**
+     * Return true if URL has a known "Signed" signature.  There is no expecation this is comprehensive, but it
+     * does match Amazon and Google patterns and possibly others*
+     *
+     * @param url
+     * @return
+     */
+    public static boolean isSignedURL(String url) {
+        Pattern pattern = Pattern.compile("X-.*-Signature");
+        Matcher matcher = pattern.matcher(url);
+        return matcher.find();
+    }
+
     public class UnsatisfiableRangeException extends RuntimeException {
 
         String message;
@@ -1178,4 +1210,18 @@ return null;
             return maxAge;
         }
     }
+
+    private static Map<String, String> urlMappings;
+
+    static {
+        // mutable map
+        urlMappings = new HashMap<>();
+        urlMappings.put("https://s3.amazonaws.com/igv.broadinstitute.org/genomes/seq/hg19/hg19.fasta", "https://igv.genepattern.org/genomes/seq/hg19/hg19.fasta");
+        urlMappings.put("https://s3.amazonaws.com/igv.broadinstitute.org/genomes/seq/hg19/hg19.fasta.fai", "https://igv.genepattern.org/genomes/seq/hg19/hg19.fasta.fai");
+        urlMappings.put("https://s3.amazonaws.com/igv.broadinstitute.org/genomes/seq/hg19/cytoBand.txt", "https://igv.genepattern.org/genomes/seq/hg19/cytoBand.txt");
+        urlMappings.put("https://s3.amazonaws.com/igv.broadinstitute.org/genomes/seq/hg38/hg38.fa", "https://igv.genepattern.org/genomes/seq/hg38/hg38.fa");
+        urlMappings.put("https://s3.amazonaws.com/igv.broadinstitute.org/genomes/seq/hg38/hg38.fa.fai", "https://igv.genepattern.org/genomes/seq/hg38/hg38.fa.fai");
+    }
+
+
 }

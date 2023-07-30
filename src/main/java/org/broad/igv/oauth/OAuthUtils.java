@@ -33,6 +33,7 @@ import org.broad.igv.DirectoryManager;
 import org.broad.igv.prefs.PreferencesManager;
 import org.broad.igv.util.AmazonUtils;
 import org.broad.igv.util.GoogleUtils;
+import org.broad.igv.util.HttpUtils;
 
 
 import java.io.*;
@@ -142,6 +143,9 @@ public class OAuthUtils {
 
 
     private String loadAsString(String urlOrPath) throws IOException {
+        if(HttpUtils.isRemoteURL(urlOrPath)) {
+            urlOrPath = HttpUtils.mapURL(urlOrPath);
+        }
         InputStream is = null;
         try {
             is = openInputStream(urlOrPath);
@@ -206,9 +210,7 @@ public class OAuthUtils {
 
     /**
      * Open an input stream for reading a local or remote file.
-     * <p>
-     * NOTE:  This method does not use HttpUtils by design.  This class must be independent of HttpUtils.
-     *
+
      * @param urlOrPath -- either an http URL or path to a local file.  Can be gzipped
      * @return
      * @throws IOException
@@ -218,9 +220,8 @@ public class OAuthUtils {
         InputStream inputStream = null;
         if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) {
             URL url = new URL(urlOrPath);
-            URLConnection conn = url.openConnection();
+            URLConnection conn = HttpUtils.getInstance().openProxiedConnection(url);
             inputStream = conn.getInputStream();
-            urlOrPath = url.getPath();
         } else {
             if (urlOrPath.startsWith("file://")) {
                 urlOrPath = urlOrPath.substring(7);

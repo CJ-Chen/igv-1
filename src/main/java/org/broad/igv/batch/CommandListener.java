@@ -35,6 +35,7 @@ import org.broad.igv.oauth.OAuthUtils;
 import org.broad.igv.prefs.Constants;
 import org.broad.igv.prefs.PreferencesManager;
 import org.broad.igv.ui.IGV;
+import org.broad.igv.ui.util.MessageUtils;
 import org.broad.igv.ui.util.UIUtilities;
 import org.broad.igv.util.HttpUtils;
 import org.broad.igv.util.StringUtils;
@@ -224,15 +225,20 @@ public class CommandListener implements Runnable {
                                 if (command.equals("/oauthCallback")) {
 
                                     OAuthProvider provider = OAuthUtils.getInstance().getProviderForState(params.get("state"));
-
-                                    if (params.containsKey("code")) {
+                                    if (params.containsKey("error")) {
+                                        sendTextResponse(out, "Error authorizing IGV: " + params.get("error"));
+                                    } else if (params.containsKey("code")) {
                                         provider.setAuthorizationCode(params.get("code"));
+                                        sendTextResponse(out, "Authorization successful.  You may close this tab.");
                                     } else if (params.containsKey("token")) {
                                         // Very doubtful this is ever called -- its not a normal OAuth flow
                                         log.info("Oauth token received");
                                         provider.setAccessToken(params.get("token"));
+                                        sendTextResponse(out, "Authorization successful.  You may close this tab.");
+                                    } else {
+                                        sendTextResponse(out, "Unsuccessful authorization response: " + inputLine);
                                     }
-                                    sendTextResponse(out, "SUCCESS");
+
 
                                     if (PreferencesManager.getPreferences().getAsBoolean(Constants.PORT_ENABLED) == false) {
                                         // Turn off port
@@ -306,7 +312,8 @@ public class CommandListener implements Runnable {
     private static final String CONNECTION_CLOSE = "Connection: close";
     private static final String NO_CACHE = "Cache-Control: no-cache, no-store";
     private static final String ACCESS_CONTROL_ALLOW_ORIGIN = "Access-Control-Allow-Origin: *";
-
+    private static final String ACCESS_CONTROL_ALLOW_HEADERS = "Access-Control-Allow-Headers: access-control-allow-origin";
+    
     private void sendTextResponse(PrintWriter out, String result) {
         sendHTTPResponse(out, result, "text/html", "GET");
     }
@@ -341,6 +348,8 @@ public class CommandListener implements Runnable {
         out.print(HTTP_NO_RESPONSE);
         out.print(CRLF);
         out.print(ACCESS_CONTROL_ALLOW_ORIGIN);
+        out.print(CRLF);
+        out.print(ACCESS_CONTROL_ALLOW_HEADERS);
         out.print(CRLF);
         out.println("Access-Control-Allow-Methods: HEAD, GET, OPTIONS");
         out.print(CRLF);
@@ -389,8 +398,11 @@ public class CommandListener implements Runnable {
                 // Default for merge is "false" for session files,  "true" otherwise
                 boolean merge;
                 if (mergeValue != null) {
-                    // Explicit setting
-                    merge = mergeValue.equalsIgnoreCase("true");
+                    if ("ask".equals(mergeValue)) {
+                        merge = !MessageUtils.confirm("Unload current session before loading new tracks?");
+                    } else {
+                        merge = mergeValue.equalsIgnoreCase("true");
+                    }
                 } else if (file.endsWith(".xml") || file.endsWith(".php") || file.endsWith(".php3")) {
                     // Session file
                     merge = false;

@@ -28,6 +28,7 @@ package org.broad.igv.sam;
 
 import org.broad.igv.Globals;
 import org.broad.igv.event.AlignmentTrackEvent;
+import org.broad.igv.event.DataLoadedEvent;
 import org.broad.igv.event.IGVEventBus;
 import org.broad.igv.event.IGVEventObserver;
 import org.broad.igv.feature.FeatureUtils;
@@ -51,7 +52,6 @@ import org.broad.igv.ui.panel.FrameManager;
 import org.broad.igv.ui.panel.IGVPopupMenu;
 import org.broad.igv.ui.panel.ReferenceFrame;
 import org.broad.igv.ui.util.MessageUtils;
-import org.broad.igv.util.Pair;
 import org.broad.igv.util.ResourceLocator;
 import org.broad.igv.util.StringUtils;
 import org.broad.igv.util.blat.BlatClient;
@@ -66,6 +66,7 @@ import java.awt.event.MouseEvent;
 import java.awt.geom.Rectangle2D;
 import java.util.List;
 import java.util.*;
+import java.util.function.Consumer;
 
 import static org.broad.igv.prefs.Constants.*;
 
@@ -75,7 +76,7 @@ import static org.broad.igv.prefs.Constants.*;
 
 public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
 
-    private static Logger log = LogManager.getLogger(AlignmentTrack.class);
+    private static final Logger log = LogManager.getLogger(AlignmentTrack.class);
 
     // Alignment colors
     static final Color DEFAULT_ALIGNMENT_COLOR = new Color(185, 185, 185); //200, 200, 200);
@@ -101,10 +102,31 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         YC_TAG,
         BASE_MODIFICATION,
         BASE_MODIFICATION_5MC,
-        BASE_MODIFICATION_C;
+        BASE_MODIFICATION_C,
+        BASE_MODIFICATION_6MA,
+        SMRT_SUBREAD_IPD,
+        SMRT_SUBREAD_PW,
+        SMRT_CCS_FWD_IPD,
+        SMRT_CCS_FWD_PW,
+        SMRT_CCS_REV_IPD,
+        SMRT_CCS_REV_PW;
 
         public boolean isBaseMod() {
-            return this == BASE_MODIFICATION || this == BASE_MODIFICATION_5MC || this == BASE_MODIFICATION_C;
+            return this == BASE_MODIFICATION || this == BASE_MODIFICATION_5MC || this == BASE_MODIFICATION_C || this == BASE_MODIFICATION_6MA;
+        }
+
+        public boolean isSMRTKinetics() {
+            switch (this) {
+                case SMRT_SUBREAD_IPD:
+                case SMRT_SUBREAD_PW:
+                case SMRT_CCS_FWD_IPD:
+                case SMRT_CCS_REV_IPD:
+                case SMRT_CCS_FWD_PW:
+                case SMRT_CCS_REV_PW:
+                    return true;
+                default:
+                    return false;
+            }
         }
     }
 
@@ -131,6 +153,7 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         PAIR_ORIENTATION("pair orientation"),
         MATE_CHROMOSOME("chromosome of mate"),
         NONE("none"),
+        CHIMERIC("chimeric"),
         SUPPLEMENTARY("supplementary flag"),
         BASE_AT_POS("base at position"),
         MOVIE("movie"),
@@ -150,10 +173,6 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
 
     }
 
-    public enum BisulfiteContext {
-        CG, CHH, CHG, HCG, GCH, WCG, NONE
-    }
-
     enum OrientationType {
         RR, LL, RL, LR, UNKNOWN
     }
@@ -166,43 +185,86 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
     private static final int INSERTION_ROW_HEIGHT = 9;
     private static final int DS_MARGIN_2 = 5;
 
-    static final Map<BisulfiteContext, String> bisulfiteContextToPubString = new HashMap<>();
+    public enum BisulfiteContext {
+        CG("CG", new byte[]{}, new byte[]{'G'}),
+        CHH("CHH", new byte[]{}, new byte[]{'H', 'H'}),
+        CHG("CHG", new byte[]{}, new byte[]{'H', 'G'}),
+        HCG("HCG", new byte[]{'H'}, new byte[]{'G'}),
+        GCH("GCH", new byte[]{'G'}, new byte[]{'H'}),
+        WCG("WCG", new byte[]{'W'}, new byte[]{'G'}),
+        NONE("None", null, null);
 
-    static {
-        bisulfiteContextToPubString.put(BisulfiteContext.CG, "CG");
-        bisulfiteContextToPubString.put(BisulfiteContext.CHH, "CHH");
-        bisulfiteContextToPubString.put(BisulfiteContext.CHG, "CHG");
-        bisulfiteContextToPubString.put(BisulfiteContext.HCG, "HCG");
-        bisulfiteContextToPubString.put(BisulfiteContext.GCH, "GCH");
-        bisulfiteContextToPubString.put(BisulfiteContext.WCG, "WCG");
-        bisulfiteContextToPubString.put(BisulfiteContext.NONE, "None");
-    }
+        private final String label;
+        private final byte[] preContext;
+        private final byte[] postContext;
 
-    private static final Map<BisulfiteContext, Pair<byte[], byte[]>> bisulfiteContextToContextString = new HashMap<>();
+        /**
+         * @param contextb      The residue in the context string (IUPAC)
+         * @param referenceBase The reference sequence (already checked that offsetidx is within bounds)
+         * @param readBase      The read sequence (already checked that offsetidx is within bounds)
+         */
+        private static boolean positionMatchesContext(byte contextb, final byte referenceBase, final byte readBase) {
+            boolean matchesContext = AlignmentUtils.compareBases(contextb, referenceBase);
+            if (!matchesContext) {
+                return false; // Don't need to check any further
+            }
 
-    static {
-        bisulfiteContextToContextString.put(BisulfiteContext.CG, new Pair<>(new byte[]{}, new byte[]{'G'}));
-        bisulfiteContextToContextString.put(BisulfiteContext.CHH, new Pair<>(new byte[]{}, new byte[]{'H', 'H'}));
-        bisulfiteContextToContextString.put(BisulfiteContext.CHG, new Pair<>(new byte[]{}, new byte[]{'H', 'G'}));
-        bisulfiteContextToContextString.put(BisulfiteContext.HCG, new Pair<>(new byte[]{'H'}, new byte[]{'G'}));
-        bisulfiteContextToContextString.put(BisulfiteContext.GCH, new Pair<>(new byte[]{'G'}, new byte[]{'H'}));
-        bisulfiteContextToContextString.put(BisulfiteContext.WCG, new Pair<>(new byte[]{'W'}, new byte[]{'G'}));
+            // For the read, we have to handle C separately
+            boolean matchesReadContext = AlignmentUtils.compareBases(contextb, readBase);
+            if (AlignmentUtils.compareBases((byte) 'T', readBase)) {
+                matchesReadContext |= AlignmentUtils.compareBases(contextb, (byte) 'C');
+            }
+
+            return matchesReadContext;
+        }
+
+        public BisulfiteContext getMatchingBisulfiteContext(final byte[] reference, final ByteSubarray read, final int idx) {
+            boolean matchesContext = true;
+
+            // First do the "post" context
+            int minLen = Math.min(reference.length, read.length);
+            if ((idx + postContext.length) >= minLen) {
+                matchesContext = false;
+            } else {
+                // Cut short whenever we don't match
+                for (int posti = 0; matchesContext && (posti < postContext.length); posti++) {
+                    byte contextb = postContext[posti];
+                    int offsetidx = idx + 1 + posti;
+
+                    matchesContext &= positionMatchesContext(contextb, reference[offsetidx], read.getByte(offsetidx));
+                }
+            }
+
+            // Now do the pre context
+            if ((idx - preContext.length) < 0) {
+                matchesContext = false;
+            } else {
+                // Cut short whenever we don't match
+                for (int prei = 0; matchesContext && (prei < preContext.length); prei++) {
+                    byte contextb = preContext[prei];
+                    int offsetidx = idx - (preContext.length - prei);
+
+                    matchesContext &= positionMatchesContext(contextb, reference[offsetidx], read.getByte(offsetidx));
+                }
+            }
+
+            return (matchesContext) ? this : null;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+
+        BisulfiteContext(String label, byte[] preContext, byte[] postContext) {
+            this.label = label;
+            this.preContext = preContext;
+            this.postContext = postContext;
+        }
     }
 
     public static boolean isBisulfiteColorType(ColorOption o) {
         return (o.equals(ColorOption.BISULFITE) || o.equals(ColorOption.NOMESEQ));
     }
-
-    public static byte[] getBisulfiteContextPreContext(BisulfiteContext item) {
-        Pair<byte[], byte[]> pair = AlignmentTrack.bisulfiteContextToContextString.get(item);
-        return pair.getFirst();
-    }
-
-    public static byte[] getBisulfiteContextPostContext(BisulfiteContext item) {
-        Pair<byte[], byte[]> pair = AlignmentTrack.bisulfiteContextToContextString.get(item);
-        return pair.getSecond();
-    }
-
 
     private final AlignmentDataManager dataManager;
     private final SequenceTrack sequenceTrack;
@@ -229,6 +291,7 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
     private ColorTable readNamePalette;
     private final HashMap<String, Color> selectedReadNames = new HashMap<>();
 
+    private final HashMap<ReferenceFrame, Consumer<ReferenceFrame>> actionToPerformOnFrameLoad = new HashMap<>();
 
     /**
      * Create a new alignment track
@@ -278,7 +341,7 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         spliceJunctionTrack.setHeight(60);
         this.spliceJunctionTrack = spliceJunctionTrack;
 
-        if (renderOptions.colorOption == ColorOption.BISULFITE) {
+        if (renderOptions.getColorOption() == ColorOption.BISULFITE) {
             setExperimentType(ExperimentType.BISULFITE);
         }
         readNamePalette = new PaletteColorTable(ColorUtilities.getDefaultPalette());
@@ -288,14 +351,13 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
 
         IGVEventBus.getInstance().subscribe(FrameManager.ChangeEvent.class, this);
         IGVEventBus.getInstance().subscribe(AlignmentTrackEvent.class, this);
+        IGVEventBus.getInstance().subscribe(DataLoadedEvent.class, this);
     }
 
     public void init() {
-        if (experimentType == null) {
+        if (experimentType == null || experimentType == ExperimentType.UNKOWN) {
             ExperimentType type = dataManager.inferType();
-            if (type != null) {
-                setExperimentType(type);
-            }
+            setExperimentType(type);
         }
     }
 
@@ -328,6 +390,12 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
                     break;
             }
 
+        } else if (event instanceof DataLoadedEvent) {
+            final DataLoadedEvent dataLoaded = (DataLoadedEvent) event;
+            actionToPerformOnFrameLoad.computeIfPresent(dataLoaded.getReferenceFrame(), (k, v) -> {
+                v.accept(k);
+                return null;
+            });
         }
     }
 
@@ -451,10 +519,15 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         dataManager.load(referenceFrame, renderOptions, true);
     }
 
+    @Override
+    public int getVisibilityWindow() {
+        return (int) dataManager.getVisibilityWindow();
+    }
+
     public void render(RenderContext context, Rectangle rect) {
 
         int viewWindowSize = context.getReferenceFrame().getCurrentRange().getLength();
-        if (viewWindowSize > dataManager.getVisibilityWindow()) {
+        if (viewWindowSize > getVisibilityWindow()) {
             Rectangle visibleRect = context.getVisibleRect().intersection(rect);
             Graphics2D g2 = context.getGraphic2DForColor(Color.gray);
             GraphicUtils.drawCenteredText("Zoom in to see alignments.", visibleRect, g2);
@@ -539,8 +612,8 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         }
 
         // Check for YC tag
-        if (renderOptions.colorOption == null && dataManager.hasYCTags()) {
-            renderOptions.colorOption = ColorOption.YC_TAG;
+        if (renderOptions.getColorOption() == null && dataManager.hasYCTags()) {
+            renderOptions.setColorOption(ColorOption.YC_TAG);
         }
 
         Map<String, PEStats> peStats = dataManager.getPEStats();
@@ -676,13 +749,16 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         boolean leaveMargin = getDisplayMode() != DisplayMode.SQUISHED;
 
         // Insertion interval
-        Graphics2D g = context.getGraphic2DForColor(Color.red);
-        Rectangle iRect = new Rectangle(inputRect.x, insertionRect.y, inputRect.width, insertionRect.height);
-        g.fill(iRect);
-        List<InsertionInterval> insertionIntervals = getInsertionIntervals(context.getReferenceFrame());
+        if (this.renderOptions.isShowInsertionMarkers()) {
+            Graphics2D g = context.getGraphic2DForColor(Color.red);
+            Rectangle iRect = new Rectangle(inputRect.x, insertionRect.y, inputRect.width, insertionRect.height);
+            g.fill(iRect);
 
-        iRect.x += context.translateX;
-        insertionIntervals.add(new InsertionInterval(iRect, insertionMarker));
+            List<InsertionInterval> insertionIntervals = getInsertionIntervals(context.getReferenceFrame());
+
+            iRect.x += context.translateX;
+            insertionIntervals.add(new InsertionInterval(iRect, insertionMarker));
+        }
 
 
         inputRect.y += DS_MARGIN_0 + DOWNAMPLED_ROW_HEIGHT + DS_MARGIN_0 + INSERTION_ROW_HEIGHT + DS_MARGIN_2;
@@ -753,12 +829,21 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         return null;
     }
 
-    public void sortRows(final SortOption option, final Double location, final String tag, final boolean invertSort) {
+    public void sortRows(final SortOption option, final Double location, final String tag, final boolean invertSort, final Set<String> priorityRecords) {
         final List<ReferenceFrame> frames = FrameManager.getFrames();
         for (ReferenceFrame frame : frames) {
-            final double actloc = location != null ? location : frame.getCenter();
-            final AlignmentInterval interval = getDataManager().getLoadedInterval(frame);
-            interval.sortRows(option, actloc, tag, invertSort);
+            Consumer<ReferenceFrame> sort = (ReferenceFrame f) -> {
+                final AlignmentInterval interval = getDataManager().getLoadedInterval(f);
+                final double actloc = location != null ? location : f.getCenter();
+                interval.sortRows(option, actloc, tag, invertSort, priorityRecords);
+            };
+            //If the data is loaded sort now, otherwise delay until we get a message that it is loaded.
+            if (getDataManager().isLoaded(frame)) {
+                sort.accept(frame);
+            } else {
+                log.debug("Attempt to sort alignments prior to loading");
+                actionToPerformOnFrameLoad.put(frame, sort);
+            }
         }
     }
 
@@ -788,7 +873,6 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         renderOptions.setGroupByOption(option);
         dataManager.packAlignments(renderOptions);
         repaint();
-
     }
 
     public void setBisulfiteContext(BisulfiteContext option) {
@@ -854,6 +938,12 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
     }
 
 
+    Alignment getAlignmentAt(final TrackClickEvent te) {
+        MouseEvent e = te.getMouseEvent();
+        final ReferenceFrame frame = te.getFrame();
+        return frame == null ? null : getAlignmentAt(frame.getChromosomePosition(e), e.getY(), frame);
+    }
+
     Alignment getAlignmentAt(double position, int y, ReferenceFrame frame) {
 
         if (alignmentsRect == null || dataManager == null) {
@@ -886,12 +976,16 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         MouseEvent e = te.getMouseEvent();
         if (Globals.IS_MAC && e.isMetaDown() || (!Globals.IS_MAC && e.isControlDown())) {
             // Selection
-            final ReferenceFrame frame = te.getFrame();
-            if (frame != null) {
-                selectAlignment(e, frame);
-                IGV.getInstance().repaint(this);
-                return true;
+            Alignment alignment = this.getAlignmentAt(te);
+            if (alignment != null) {
+                if (selectedReadNames.containsKey(alignment.getReadName())) {
+                    selectedReadNames.remove(alignment.getReadName());
+                } else {
+                    setSelectedAlignment(alignment);
+                }
+                IGV.getInstance().repaint(this); //todo check if doing this conditionally here is ok
             }
+            return true;
         }
 
         InsertionInterval insertionInterval = getInsertionInterval(te.getFrame(), te.getMouseEvent().getX(), te.getMouseEvent().getY());
@@ -919,19 +1013,6 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         return false;
     }
 
-    private void selectAlignment(MouseEvent e, ReferenceFrame frame) {
-        double location = frame.getChromosomePosition(e.getX());
-        Alignment alignment = this.getAlignmentAt(location, e.getY(), frame);
-        if (alignment != null) {
-            if (selectedReadNames.containsKey(alignment.getReadName())) {
-                selectedReadNames.remove(alignment.getReadName());
-            } else {
-                setSelectedAlignment(alignment);
-            }
-
-        }
-    }
-
     void setSelectedAlignment(Alignment alignment) {
         Color c = readNamePalette.get(alignment.getReadName());
         selectedReadNames.put(alignment.getReadName(), c);
@@ -945,7 +1026,7 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
 
     public void setViewAsPairs(boolean vAP) {
         // TODO -- generalize this test to all incompatible pairings
-        if (vAP && renderOptions.groupByOption == GroupOption.STRAND) {
+        if (vAP && renderOptions.getGroupByOption() == GroupOption.STRAND) {
             boolean ungroup = MessageUtils.confirm("\"View as pairs\" is incompatible with \"Group by strand\". Ungroup?");
             if (ungroup) {
                 renderOptions.setGroupByOption(null);
@@ -959,41 +1040,8 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
     }
 
 
-    public enum ExperimentType {OTHER, RNA, BISULFITE, THIRD_GEN}
+    public enum ExperimentType {OTHER, RNA, BISULFITE, THIRD_GEN, UNKOWN}
 
-
-    class RenderRollback {
-        final ColorOption colorOption;
-        final GroupOption groupByOption;
-        final String groupByTag;
-        final String colorByTag;
-        final String linkByTag;
-        final DisplayMode displayMode;
-        final int expandedHeight;
-        final boolean showGroupLine;
-
-        RenderRollback(RenderOptions renderOptions, DisplayMode displayMode) {
-            this.colorOption = renderOptions.colorOption;
-            this.groupByOption = renderOptions.groupByOption;
-            this.colorByTag = renderOptions.colorByTag;
-            this.groupByTag = renderOptions.groupByTag;
-            this.displayMode = displayMode;
-            this.expandedHeight = AlignmentTrack.this.expandedHeight;
-            this.showGroupLine = AlignmentTrack.this.showGroupLine;
-            this.linkByTag = renderOptions.linkByTag;
-        }
-
-        void restore(RenderOptions renderOptions) {
-            renderOptions.colorOption = this.colorOption;
-            renderOptions.groupByOption = this.groupByOption;
-            renderOptions.colorByTag = this.colorByTag;
-            renderOptions.groupByTag = this.groupByTag;
-            renderOptions.linkByTag = this.linkByTag;
-            AlignmentTrack.this.expandedHeight = this.expandedHeight;
-            AlignmentTrack.this.showGroupLine = this.showGroupLine;
-            AlignmentTrack.this.setDisplayMode(this.displayMode);
-        }
-    }
 
     public boolean isRemoved() {
         return removed;
@@ -1249,6 +1297,7 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
     public static class RenderOptions implements Cloneable, Persistable {
 
         public static final String NAME = "RenderOptions";
+        private static final Logger log = LogManager.getLogger(RenderOptions.class);
 
         private AlignmentTrack track;
         private Boolean shadeBasesOption;
@@ -1282,6 +1331,8 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
         private Boolean showInsertionMarkers;
         private Boolean hideSmallIndels;
         private Integer smallIndelThreshold;
+
+        private String basemodFilter;
 
         BisulfiteContext bisulfiteContext = BisulfiteContext.CG;
         Map<String, PEStats> peStats;
@@ -1553,6 +1604,13 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
             return smallIndelThreshold == null ? getPreferences().getAsInt(SAM_SMALL_INDEL_BP_THRESHOLD) : smallIndelThreshold;
         }
 
+        public String getBasemodFilter() {
+            return basemodFilter;
+        }
+
+        public void setBasemodFilter(String basemodFilter) {
+            this.basemodFilter = basemodFilter;
+        }
 
         @Override
         public void marshalXML(Document document, Element element) {
@@ -1649,6 +1707,9 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
             }
             if (showInsertionMarkers != null) {
                 element.setAttribute("showInsertionMarkers", showInsertionMarkers.toString());
+            }
+            if (basemodFilter != null) {
+                element.setAttribute("basemodfilter", basemodFilter);
             }
         }
 
@@ -1752,6 +1813,10 @@ public class AlignmentTrack extends AbstractTrack implements IGVEventObserver {
             if (element.hasAttribute("showInsertionMarkers")) {
                 showInsertionMarkers = Boolean.parseBoolean(element.getAttribute("showInsertionMarkers"));
             }
+            if (element.hasAttribute("basemodfilter")) {
+                basemodFilter = element.getAttribute("basemodfilter");
+            }
+
         }
     }
 

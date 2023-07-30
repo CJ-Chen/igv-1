@@ -125,7 +125,7 @@ public class SashimiPlot extends JFrame implements IGVEventObserver {
             // Override expand/collpase setting -- expanded sashimi plots make no sense
             spliceJunctionTrack.setDisplayMode(Track.DisplayMode.COLLAPSED);
 
-            spliceJunctionTrack.setRendererClass(SashimiJunctionRenderer.class);
+            spliceJunctionTrack.setRenderer(new SashimiJunctionRenderer());
 
             Color color = plotColors.get(colorInd);
             colorInd = (colorInd + 1) % plotColors.size();
@@ -260,7 +260,7 @@ public class SashimiPlot extends JFrame implements IGVEventObserver {
 
         public void updateToolTipText(TrackClickEvent tce) {
             toolTipText = track.getValueStringAt(tce.getFrame().getChrName(), tce.getChromosomePosition(), tce.getMouseEvent().getX(), tce.getMouseEvent().getY(), tce.getFrame());
-            toolTipText = "<html>" + toolTipText;
+            toolTipText = toolTipText == null ? "" : "<html>" + toolTipText;
             setToolTipText(toolTipText);
         }
 

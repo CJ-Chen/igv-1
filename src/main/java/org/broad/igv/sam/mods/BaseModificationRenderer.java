@@ -15,7 +15,8 @@ public class BaseModificationRenderer {
             double locScale,
             Rectangle rowRect,
             Graphics g,
-            AlignmentTrack.ColorOption colorOption) {
+            AlignmentTrack.ColorOption colorOption,
+            String basemodFilter) {
 
         switch (colorOption) {
             case BASE_MODIFICATION_5MC:
@@ -24,9 +25,11 @@ public class BaseModificationRenderer {
             case BASE_MODIFICATION_C:
                 draw5mC(alignment, bpStart, locScale, rowRect, g, true);
                 break;
-
+            case BASE_MODIFICATION_6MA:
+                draw(alignment, bpStart, locScale, rowRect, g, "a");
+                break;
             default:
-                draw(alignment, bpStart, locScale, rowRect, g);
+                draw(alignment, bpStart, locScale, rowRect, g, basemodFilter);
         }
 
     }
@@ -45,7 +48,8 @@ public class BaseModificationRenderer {
             double bpStart,
             double locScale,
             Rectangle rowRect,
-            Graphics g) {
+            Graphics g,
+            String filter) {
 
         List<BaseModificationSet> baseModificationSets = alignment.getBaseModificationSets();
 
@@ -73,10 +77,12 @@ public class BaseModificationRenderer {
                     byte lh = 0;
                     String modification = null;
                     for (BaseModificationSet bmSet : baseModificationSets) {
-                        if (bmSet.containsPosition(i)) {
-                            if (modification == null || Byte.toUnsignedInt(bmSet.getLikelihoods().get(i)) > Byte.toUnsignedInt(lh)) {
-                                modification = bmSet.getModification();
-                                lh = bmSet.getLikelihoods().get(i);
+                        if (filter == null  || filter.equals(bmSet.getModification())) {
+                            if (bmSet.containsPosition(i)) {
+                                if (modification == null || Byte.toUnsignedInt(bmSet.getLikelihoods().get(i)) > Byte.toUnsignedInt(lh)) {
+                                    modification = bmSet.getModification();
+                                    lh = bmSet.getLikelihoods().get(i);
+                                }
                             }
                         }
                     }
@@ -185,5 +191,4 @@ public class BaseModificationRenderer {
             }
         }
     }
-
 }

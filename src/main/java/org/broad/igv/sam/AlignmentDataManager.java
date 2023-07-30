@@ -25,6 +25,7 @@
 
 package org.broad.igv.sam;
 
+import org.broad.igv.event.DataLoadedEvent;
 import org.broad.igv.logging.*;
 import org.broad.igv.Globals;
 import org.broad.igv.event.IGVEventBus;
@@ -35,6 +36,7 @@ import org.broad.igv.feature.Range;
 import org.broad.igv.feature.genome.Genome;
 import org.broad.igv.prefs.IGVPreferences;
 import org.broad.igv.prefs.PreferencesManager;
+import org.broad.igv.sam.mods.BaseModificationSet;
 import org.broad.igv.sam.reader.AlignmentReader;
 import org.broad.igv.sam.reader.AlignmentReaderFactory;
 import org.broad.igv.track.Track;
@@ -57,17 +59,18 @@ public class AlignmentDataManager implements IGVEventObserver {
     private static Logger log = LogManager.getLogger(AlignmentDataManager.class);
     private final AlignmentReader reader;
 
-
     private AlignmentTrack alignmentTrack;
     private CoverageTrack coverageTrack;
     private Set<Track> subscribedTracks;
-
     private List<AlignmentInterval> intervalCache;
     private ResourceLocator locator;
     private HashMap<String, String> chrMappings = new HashMap();
     private AlignmentTileLoader loader;
     private Map<String, PEStats> peStats;
     private SpliceJunctionHelper.LoadOptions loadOptions;
+
+    private Set<String> allBaseModifications = new HashSet<>();
+
     private Range currentlyLoading;
 
     public AlignmentDataManager(ResourceLocator locator, Genome genome) throws IOException {
@@ -190,6 +193,13 @@ public class AlignmentDataManager implements IGVEventObserver {
 
     public Map<String, PEStats> getPEStats() {
         return peStats;
+    }
+
+    /**
+     * Return all base modfications seen in loaded alignments
+     */
+    public Set<String> getAllBaseModifications() {
+        return allBaseModifications;
     }
 
     public boolean isPairedEnd() {
@@ -341,13 +351,13 @@ public class AlignmentDataManager implements IGVEventObserver {
 
             intervalCache.add(loadedInterval);
 
-            packAlignments(renderOptions);
+            loadedInterval.packAlignments(renderOptions);
 
         } finally {
             currentlyLoading = null;
         }
 
-        //  IGVEventBus.getInstance().post(new DataLoadedEvent(frame));
+        IGVEventBus.getInstance().post(new DataLoadedEvent(frame));
 
     }
 
@@ -379,7 +389,7 @@ public class AlignmentDataManager implements IGVEventObserver {
 
     AlignmentInterval loadInterval(String chr, int start, int end, AlignmentTrack.RenderOptions renderOptions) {
 
-        String sequence = chrMappings.containsKey(chr) ? chrMappings.get(chr) : chr;
+        String sequence = chrMappings.getOrDefault(chr, chr);
 
         DownsampleOptions downsampleOptions = new DownsampleOptions();
 
@@ -390,9 +400,21 @@ public class AlignmentDataManager implements IGVEventObserver {
 
         AlignmentTileLoader.AlignmentTile t = getLoader().loadTile(sequence, start, end, spliceJunctionHelper,
                 downsampleOptions, peStats, bisulfiteContext, renderOptions);
-      List<Alignment> alignments = t.getAlignments();
+        List<Alignment> alignments = t.getAlignments();
         List<DownsampledInterval> downsampledIntervals = t.getDownsampledIntervals();
+        this.updateBaseModfications(alignments);
         return new AlignmentInterval(chr, start, end, alignments, t.getCounts(), spliceJunctionHelper, downsampledIntervals);
+    }
+
+    private void updateBaseModfications(List<Alignment> alignments) {
+        for(Alignment a : alignments) {
+            List<BaseModificationSet> bmSets = a.getBaseModificationSets();
+            if(bmSets != null) {
+                for(BaseModificationSet bms : bmSets) {
+                    allBaseModifications.add(bms.getModification());
+                }
+            }
+        }
     }
 
     public AlignmentTrack.ExperimentType inferType() {

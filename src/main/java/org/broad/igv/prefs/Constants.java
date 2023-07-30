@@ -34,6 +34,10 @@ final public class Constants {
     public static final String SHOW_GENOME_SERVER_WARNING = "SHOW_GENOME_SERVER_WARNING";
     public static final String CN_FREQ_AMP_THRESHOLD = "CN_FREQ.AMP_THRESHOLD";
     public static final String CN_FREQ_DEL_THRESHOLD = "CN_FREQ.DEL_THRESHOLD";
+    public static final String AUTOSAVE_ON_EXIT = "AUTOSAVE_ON_EXIT";
+    public static final String AUTOLOAD_LAST_AUTOSAVE = "AUTOLOAD_LAST_AUTOSAVE";
+    public static final String AUTOSAVE_FREQUENCY = "AUTOSAVE_FREQUENCY";
+    public static final String AUTOSAVES_TO_KEEP = "AUTOSAVES_TO_KEEP";
 
     //
     public static final String RECENT_SESSIONS = "IGV.Session.recent.sessions";
@@ -139,6 +143,8 @@ final public class Constants {
     public static final String SAM_SORT_OPTION = "SAM.SORT_OPTION";
     public static final String SAM_INVERT_SORT = "SAM.INVERT_SORT";
     public static final String SAM_GROUP_OPTION = "SAM.GROUP_OPTION";
+
+    public static final String SAM_GROUP_ALL = "SAM.GROUP_ALL";
     public static final String SAM_SHOW_ALL_BASES = "SAM.SHOW_ALL_BASES";
     public static final String SAM_SHOW_MISMATCHES = "SAM.SHOW_MISMATCHES";
     public static final String SAM_COLOR_BY = "SAM.COLOR_BY";
@@ -161,6 +167,8 @@ final public class Constants {
     public static final String SAM_LARGE_INDELS_THRESHOLD = "SAM.LARGE_INSERTIONS_THRESOLD";
     public static final String SAM_FLAG_CLIPPING = "SAM.FLAG_CLIPPING";
     public static final String SAM_CLIPPING_THRESHOLD = "SAM.CLIPPING_THRESHOLD";
+
+    public static final String SAM_SHOW_CONNECTED_CHR_NAME = "SAM.SHOW_CONNECTED_CHR_NAME";
     public static final String SAM_SHOW_GROUP_SEPARATOR = "SAM.SHOW_GROUP_SEPARATOR";
     public static final String SAM_REDUCED_MEMORY_MODE = "SAM.REDUCED_MEMORY_MODE";
     public static final String SAM_HIDE_SMALL_INDEL = "SAM.HIDE_SMALL_INDEL";
@@ -174,6 +182,8 @@ final public class Constants {
     public static final String SAM_DISPLAY_MODE = "SAM.DISPLAY_MODE";
     public static final String SAM_DISPLAY_PAIRED = "SAM.DISPLAY_PAIRED";
     public static final String KNOWN_SNPS = "KNOWN_SNPS_FILE";
+
+    public static final String SMRT_KINETICS_SHOW_OPTIONS = "SMRT_KINETICS.SHOW_OPTIONS";
 
     // Sequence track settings
     public static final String SEQUENCE_TRANSLATION_STRAND = "SEQUENCE_TRANSLATION_STRAND";
@@ -212,6 +222,8 @@ final public class Constants {
     public static final String OVERLAY_ATTRIBUTE_KEY = "OVERLAY_ATTRIBUTE_KEY";
     public static final String OVERLAY_MUTATIONS_WHOLE_GENOME = "OVERLAY_MUTATIONS_WHOLE_GENOME";
     public static final String COLOR_MUTATIONS = "COVER_OVERLAY_KEY";
+
+    public static final String MUT_COORDS = "MUT_COORDS";
 
     // GWAS track options
     public static final String GWAS_TRACK_HEIGHT = "GWAS_TRACK_HEIGHT";

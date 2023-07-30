@@ -46,6 +46,8 @@ import org.broad.igv.sam.InsertionMarker;
 import org.broad.igv.ui.IGV;
 import org.broad.igv.ui.util.MessageUtils;
 
+import java.awt.event.MouseEvent;
+
 
 /**
  * @author jrobinso
@@ -496,7 +498,7 @@ public class ReferenceFrame {
 
     protected void calculateMaxZoom() {
         this.maxZoom = Globals.CHR_ALL.equals(this.chrName) ? 0 :
-                (int) Math.ceil(Math.log(getChromosomeLength() / minBP) / Globals.log2);
+                (int) Math.ceil(Globals.log2(getChromosomeLength() / minBP));
     }
 
     public String getChrName() {
@@ -508,6 +510,10 @@ public class ReferenceFrame {
     // layout manager?
     public int getWidthInPixels() {
         return widthInPixels;
+    }
+
+    public double getChromosomePosition(final MouseEvent e) {
+        return getChromosomePosition(e.getX());
     }
 
     /**
@@ -708,8 +714,9 @@ public class ReferenceFrame {
      * @param end
      * @return
      */
-    private int calculateZoom(double start, double end) {
-        return (int) Math.round((Math.log((getChromosomeLength() / (end - start)) * (((double) widthInPixels) / binsPerTile)) / Globals.log2));
+    public int calculateZoom(double start, double end) {
+        final double windowLength = Math.min(end - start, getChromosomeLength());
+        return (int) Math.round(Globals.log2((getChromosomeLength() / windowLength) * (((double) widthInPixels) / binsPerTile)));
     }
 
 
